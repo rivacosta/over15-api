@@ -6,15 +6,19 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// Servir arquivos estáticos do diretório 'public'
-app.use(express.static("public"));
-
-// Rota para /over15
-app.get("/over15", (req, res) => {
-  res.json({ message: "API funcionando! Em breve os dados reais aparecerão aqui." });
+// Rota principal só pra teste
+app.get("/", (req, res) => {
+  res.send("API Over 1.5 ativa!");
 });
 
-// Iniciar o servidor
+// Rota com dados (pode atualizar depois com dados reais)
+app.get("/over15", (req, res) => {
+  res.json({
+    message: "API funcionando! Em breve os dados reais aparecerão aqui.",
+    status: "ok"
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
