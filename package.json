@@ -1,14 +1,13 @@
 {
-  "name": "over15-backend",
+  "name": "over15-api",
   "version": "1.0.0",
-  "description": "API que retorna jogos com alta chance de Over 1.5",
+  "description": "API de jogos com alta probabilidade de over 1.5 gols",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
-    "cors": "^2.8.5",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
   }
 }
