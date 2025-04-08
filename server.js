@@ -1,21 +1,20 @@
-const express = require("express");
-const cors = require("cors");
+const express = require('express');
+const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 
-// Rota principal só pra teste
-app.get("/", (req, res) => {
-  res.send("API Over 1.5 ativa!");
+app.get('/', (req, res) => {
+  res.send('API Over 1.5 Gols está online!');
 });
 
-// Rota com dados (pode atualizar depois com dados reais)
-app.get("/over15", (req, res) => {
+// 👉 Aqui está a rota /over15 funcionando!
+app.get('/over15', (req, res) => {
   res.json({
-    message: "API funcionando! Em breve os dados reais aparecerão aqui.",
-    status: "ok"
+    message: 'API funcionando! Em breve os dados reais aparecerão aqui.',
+    status: 'ok'
   });
 });
 
