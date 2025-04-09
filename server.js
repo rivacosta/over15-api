@@ -1,57 +1,45 @@
-const express = require('express');
-const axios = require('axios');
-const cors = require('cors');
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
+
 const app = express();
 app.use(cors());
 
-const API_TOKEN = 'I2jITn6D1WdRllkVSZUfv2cPRayCoCVl1YQq78WOTcl6XYZQssfitEpNXQKc';
+const PORT = process.env.PORT || 10000;
+const API_TOKEN = "I2jITn6D1WdRllkVSZUfv2cPRayCoCVl1YQq78WOTcl6XYZQssfitEpNXQKc";
 
-const ligasImportantes = [
-  2,    // UCL
-  8,    // Premier League
-  384,  // La Liga
-  82,   // Bundesliga
-  71,   // Brasileirão
-  5,    // Serie A
-  301,  // Argentina
-];
+// IDs de ligas: exemplo com Champions League (2), Premier League (8), La Liga (564), Bundesliga (82), Brasileirão (71)
+const LEAGUES = [2, 8, 564, 82, 71];
 
-app.get('/over15', async (req, res) => {
+app.get("/over15", async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split("T")[0];
 
-    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${today}?api_token=${API_TOKEN}&include=stats,participants,league`;
-
-    const response = await axios.get(url);
-    const jogos = response.data.data;
-
-    const filtrados = jogos.filter(jogo => {
-      const liga = jogo.league?.id;
-      if (!ligasImportantes.includes(liga)) return false;
-
-      const stats = jogo.stats || [];
-
-      const golsTime1 = stats[0]?.goals || 0;
-      const golsTime2 = stats[1]?.goals || 0;
-      const mediaGols = (golsTime1 + golsTime2) / 2;
-
-      return mediaGols >= 1.5;
+    const response = await axios.get(`https://api.sportmonks.com/v3/football/fixtures`, {
+      params: {
+        api_token: API_TOKEN,
+        include: "scores,teams",
+        filters: {
+          date: today,
+          league_ids: LEAGUES.join(",")
+        }
+      }
     });
 
-    res.json({
-      total: filtrados.length,
-      partidas: filtrados.map(j => ({
-        time1: j.participants[0]?.name,
-        time2: j.participants[1]?.name,
-        liga: j.league?.name,
-        horario: j.starting_at,
-      }))
+    // Filtrando jogos com mais de 90% de chance estimada de Over 1.5 (exemplo: baseada em média de gols anteriores fictícia aqui)
+    const jogosFiltrados = response.data.data.filter(jogo => {
+      const totalGoals =
+        (jogo?.scores?.home_score || 0) + (jogo?.scores?.away_score || 0);
+      return totalGoals >= 2; // Apenas para exemplo, você pode usar estatísticas reais depois
     });
 
+    res.json(jogosFiltrados);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Erro ao buscar dados' });
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ erro: "Erro ao buscar dados da API Sportmonks" });
   }
 });
 
-app.listen(10000, () => console.log('Servidor rodando na porta 10000'));
+app.listen(PORT, () => {
+  console.log(`✅ API rodando na porta ${PORT}`);
+});
