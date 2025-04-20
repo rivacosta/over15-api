@@ -17,21 +17,19 @@ app.get('/api/jogos-hoje', async (req, res) => {
     const dia = String(today.getDate()).padStart(2, '0');
     const dataFormatada = `${ano}-${mes}-${dia}`;
 
-    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=stats;localTeam;visitorTeam`;
+    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=localTeam;visitorTeam`;
 
     const response = await axios.get(url);
 
-    // Log no terminal do Render para debug
     console.log("✅ Dados recebidos da Sportmonks:");
     console.log(JSON.stringify(response.data, null, 2));
 
-    res.json(response.data); // Envia a resposta crua pro front-end
+    res.json(response.data); // envia pro frontend
   } catch (error) {
-  console.error('❌ Erro ao buscar dados:', error.message);
-  console.error(error.response?.data || error); // 👈 Adiciona isso
-  res.status(500).json({ erro: 'Erro ao buscar os dados do primeiro tempo' });
-}
-
+    console.error('❌ Erro ao buscar dados:', error.message);
+    console.error(error.response?.data || error);
+    res.status(500).json({ erro: 'Erro ao buscar os dados do primeiro tempo' });
+  }
 });
 
 app.listen(PORT, () => {
