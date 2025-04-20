@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 10000;
 const API_TOKEN = "I2jITn6D1WdRllkVSZUfv2cPRayCoCVl1YQq78WOTcl6XYZQssfitEpNXQKc";
 
 // Rota: Jogos com gols no 1º tempo (Over 0.5 HT)
-app.get('/over05ht', async (req, res) => {
+app.get('/api/jogos-hoje', async (req, res) => {
   try {
     const today = new Date();
     const ano = today.getFullYear();
@@ -21,16 +21,16 @@ app.get('/over05ht', async (req, res) => {
 
     const response = await axios.get(url);
 
-    // 👇 log completo da resposta pra entender o que está vindo
+    // Log no terminal do Render para debug
+    console.log("✅ Dados recebidos da Sportmonks:");
     console.log(JSON.stringify(response.data, null, 2));
 
-    res.json(response.data); // temporariamente, manda a resposta bruta
+    res.json(response.data); // Envia a resposta crua pro front-end
   } catch (error) {
-    console.error('Erro ao buscar dados:', error.message);
+    console.error('❌ Erro ao buscar dados:', error.message);
     res.status(500).json({ erro: 'Erro ao buscar os dados do primeiro tempo' });
   }
 });
-
 
 app.listen(PORT, () => {
   console.log(`✅ API rodando na porta ${PORT}`);
