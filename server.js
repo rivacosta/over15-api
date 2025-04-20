@@ -26,11 +26,13 @@ app.get('/api/jogos-hoje', async (req, res) => {
     console.log(JSON.stringify(response.data, null, 2));
 
     res.json(response.data);
-  } catch (error) {
-    console.error('❌ Erro ao buscar dados:', error.response?.data || error.message);
-    res.status(500).json({ erro: 'Erro ao buscar os dados do primeiro tempo' });
-  }
-});
+ catch (error) {
+  console.error('❌ Erro ao buscar dados:', error.response?.data || error.message);
+  res.status(500).json({
+    erro: 'Erro ao buscar os dados do primeiro tempo',
+    detalhe: error.response?.data || error.message // Mostra mais detalhes
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`✅ API rodando na porta ${PORT}`);
