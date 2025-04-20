@@ -27,9 +27,11 @@ app.get('/api/jogos-hoje', async (req, res) => {
 
     res.json(response.data); // Envia a resposta crua pro front-end
   } catch (error) {
-    console.error('❌ Erro ao buscar dados:', error.message);
-    res.status(500).json({ erro: 'Erro ao buscar os dados do primeiro tempo' });
-  }
+  console.error('❌ Erro ao buscar dados:', error.message);
+  console.error(error.response?.data || error); // 👈 Adiciona isso
+  res.status(500).json({ erro: 'Erro ao buscar os dados do primeiro tempo' });
+}
+
 });
 
 app.listen(PORT, () => {
