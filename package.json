@@ -1,13 +1,14 @@
 {
-  "name": "over15-api",
+  "name": "netmundi-api",
   "version": "1.0.0",
-  "description": "API de jogos com alta probabilidade de over 1.5 gols",
-  "main": "server.js",
+  "main": "index.js",
+  "type": "commonjs",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5"
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
   }
 }
