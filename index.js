@@ -17,7 +17,7 @@ app.get('/api/jogos-hoje', async (req, res) => {
     const dia = String(today.getDate()).padStart(2, '0');
     const dataFormatada = `${ano}-${mes}-${dia}`;
 
-    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=stats;localTeam;visitorTeam`;
+   const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=localTeam;visitorTeam;goals`;
 
     const response = await axios.get(url);
 
