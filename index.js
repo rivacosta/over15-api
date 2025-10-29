@@ -1,173 +1,285 @@
-/**
- * index.js
- * Ponto de entrada da API.
- * Responsável por:
- * 1. Configurar o servidor Express.
- * 2. Carregar variáveis de ambiente (API_TOKEN).
- * 3. Buscar jogos do dia na Sportmonks.
- * 4. Aplicar o Modelo de Predição (Poisson) para calcular o "Valor".
- */
-const express = require("express");
-const axios = require("axios");
-const cors = require("cors");
-require('dotenv').config(); // Carrega as variáveis de ambiente
+// index.js - Bot de Arbitragem Triangular (OKX SPOT - VERSÃO FINAL COM DESCOBERTA AUTOMÁTICA)
 
-// Importa a lógica de predição e as funções auxiliares
-const { calculateOver15Probability, calculateValue } = require("./prediction_model");
-const { simulateMatchStats, calculateImpliedProbability } = require("./utils");
+const ccxt = require('ccxt');
+require('dotenv').config();
+const fs = require('fs'); 
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+// ===========================================
+// CONFIGURAÇÕES GLOBAIS DO BOT
+// ===========================================
 
-// === CONFIGURAÇÃO E VERIFICAÇÃO DE AMBIENTE ===
+// --- Arbitragem Triangular (Interna - OKX) ---
+// A LISTA DE TRIÂNGULOS SERÁ GERADA AUTOMATICAMENTE
+let trianglesToMonitor = [];
 
-const API_TOKEN = process.env.API_TOKEN;
-const PORT = process.env.PORT || 10000;
+// LUCRO MÍNIMO AJUSTADO PARA 0.01%
+const minProfitTriangular = 0.0001; 
 
-// Log de verificação do Token de Emergência
-if (!API_TOKEN || API_TOKEN === "INSIRA_O_SEU_TOKEN_REAL_AQUI" || API_TOKEN === "seu_token_aqui") {
-    console.error("❌ ERRO CRÍTICO: O API_TOKEN não foi carregado corretamente.");
-    console.error("Por favor, verifique se o ficheiro .env existe na raiz do projeto e contém o seu token real.");
-    // Deixamos a linha de saída comentada para que a API inicie e mostre o erro no navegador, se necessário.
-} else {
-    console.log(`✅ Token Carregado: ${API_TOKEN.substring(0, 5)}...`);
+// --- Configurações de Execução ---
+const interval = 1000; // INTERVALO REDUZIDO PARA 1 SEGUNDO (MAIOR FREQUÊNCIA DE BUSCA)
+const okxFee = 0.001; // 0.1% Taker Fee (Padrão da OKX Spot)
+const tradeAmountUSDT = 10; // CAPITAL INICIAL POR OPERAÇÃO (em USDT)
+
+// ===========================================
+// FUNÇÃO PARA REGISTRAR LOG EM ARQUIVO CSV
+// ===========================================
+function logTransaction(status, triangle, profitPercent, prices, message) {
+    const timestamp = new Date().toISOString();
+    const profit = profitPercent ? profitPercent.toFixed(4) + '%' : 'N/A';
+    
+    // Formata o triângulo para o log
+    const triangleString = `${triangle.alt}/${triangle.base}/${triangle.quote}`; 
+    
+    const logLine = `${timestamp},${status},${triangleString},${profit},"${prices.join('|')}","${message.replace(/"/g, '""')}"\n`;
+    const logFile = 'arbitragem_log.csv';
+    
+    if (!fs.existsSync(logFile)) {
+        const header = 'Timestamp,Status,Triangulo,Lucro_Liquido,Precos_Ordem,Mensagem\n';
+        fs.writeFileSync(logFile, header);
+    }
+    
+    fs.appendFileSync(logFile, logLine);
 }
 
-// === ROTAS DA API ===
+// ===========================================
+// INSTÂNCIAS DAS CORRETORAS (OKX)
+// ===========================================
 
-// Rota Principal: Busca jogos, aplica o modelo e calcula o valor
-app.get('/api/previsoes-over-15', async (req, res) => {
-    // 1. Configura a data de hoje para a busca na Sportmonks
-    // A data será a data do sistema para garantir que haja jogos no dia de hoje.
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const dataFormatada = `${year}-${month}-${day}`;
-    // FIM DA CORREÇÃO
+console.log('--- TESTE DE LEITURA DE CHAVES OKX ---');
+console.log('API Key lida:', process.env.OKX_API_KEY ? 'Lida com sucesso' : '❌ ERRO: Chave API não lida');
+console.log('Secret Key lida:', process.env.OKX_SECRET ? 'Lida com sucesso' : '❌ ERRO: Chave Secreta não lida');
+console.log('Passphrase lida:', process.env.OKX_PASSWORD ? 'Lida com sucesso' : '❌ ERRO: Passphrase não lida');
+console.log('----------------------------------------');
 
-    // Endpoint da Sportmonks para jogos, incluindo times, liga e odds.
-    // O 'include' foi corrigido para 'participants.team;league;odds' para evitar o erro 404 da API V3.
-    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=participants.team;league;odds`;
+const exchange = new ccxt.okx({
+    'apiKey': process.env.OKX_API_KEY,  
+    'secret': process.env.OKX_SECRET,
+    'password': process.env.OKX_PASSWORD, 
+    'options': { 
+        'defaultType': 'spot', 
+        'defaultFees': { 
+            trading: { 
+                taker: okxFee 
+            } 
+        },
+        'adjustForTimeDifference': true, 
+    },
+    timeout: 15000 
+});
 
-    console.log(`\n➡️ Buscando jogos e odds para ${dataFormatada}...`);
+let marketInfo = {}; 
 
+// ===========================================
+// FUNÇÃO DE DESCOBERTA DE TRIÂNGULOS (NOVO)
+// ===========================================
+
+async function loadMarketsAndTriangles() {
     try {
-        const response = await axios.get(url);
-        const fixtures = response.data.data;
+        console.log("Carregando mercados da OKX...");
+        marketInfo = await exchange.loadMarkets();
+        console.log("Mercados carregados. Iniciando descoberta de triângulos...");
         
-        if (!fixtures || fixtures.length === 0) {
-            console.log("✅ Nenhuma partida encontrada para a data de hoje.");
-            return res.status(200).json({ mensagem: "Nenhuma partida encontrada ou erro ao extrair dados.", previsoes: [] });
-        }
+        const symbols = Object.keys(marketInfo).filter(symbol => marketInfo[symbol].spot);
+        const uniqueBases = [...new Set(symbols.map(s => marketInfo[s].base))];
+        const quoteCurrency = 'USDT'; // Moeda final de todos os triângulos
+        
+        let foundTriangles = [];
+        let checkedCount = 0;
 
-        const previsoesFinais = [];
+        // Iterar sobre todas as moedas base que podem ser o ALT (A)
+        for (const base of uniqueBases) {
+            if (base === quoteCurrency || base === 'BTC') continue;
 
-        // 2. Itera sobre cada jogo e aplica o modelo
-        for (const fixture of fixtures) {
+            // 1. A/USDT (Par 1)
+            const pair1 = `${base}/${quoteCurrency}`;
+            if (!marketInfo[pair1]) continue;
 
-            // Extrai as equipes. Na V3, as equipes (participants) vêm em um array.
-            const localTeam = fixture.participants.find(p => p.pivot.location === 'home');
-            const visitorTeam = fixture.participants.find(p => p.pivot.location === 'away');
+            // 2. A/BTC (Par 2)
+            const pair2 = `${base}/BTC`;
+            if (!marketInfo[pair2]) continue;
 
-            if (!localTeam || !visitorTeam) {
-                previsoesFinais.push({
-                    id: fixture.id,
-                    status: "ERRO DE EXTRAÇÃO DE TIMES",
-                    detalhe: "Não foi possível identificar o time local ou visitante no array 'participants'."
-                });
-                continue;
-            }
+            // 3. BTC/USDT (Par 3)
+            const pair3 = `BTC/${quoteCurrency}`;
+            if (!marketInfo[pair3]) continue;
             
-            // Tenta encontrar as odds de +1.5 Gols (Assumindo Market ID 144 para Over/Under 1.5)
-            const market15 = fixture.odds.find(odd => 
-                odd.market_id === 144 || (odd.name && (odd.name.includes("1.5"))));
-
-            if (!market15 || !market15.bookmaker || market15.bookmaker.length === 0) {
-                previsoesFinais.push({
-                    id: fixture.id,
-                    mandante: localTeam.name,
-                    visitante: visitorTeam.name,
-                    status: "ODDS INDISPONÍVEIS",
-                    detalhe: "Não foi possível encontrar o mercado Over/Under 1.5."
-                });
-                continue;
-            }
-            
-            // Extrai a Odd de Over 1.5 Gols (Procura a odd com 'Over' ou '1.5')
-            const oddData = market15.bookmaker[0].odds.find(o => 
-                o.label.includes('Over') || o.label.includes('1.5'));
-            
-            const oddOver15 = oddData ? parseFloat(oddData.value) : 0;
-            
-            if (oddOver15 === 0) {
-                previsoesFinais.push({
-                    id: fixture.id,
-                    mandante: localTeam.name,
-                    visitante: visitorTeam.name,
-                    status: "ODD 1.5 NÃO ENCONTRADA",
-                    detalhe: "O valor da odd Over 1.5 é zero ou não foi extraído corretamente."
-                });
-                continue;
-            }
-
-            // 3. Obtém as estatísticas necessárias (FA, FD, Média da Liga) - **USANDO SIMULAÇÃO**
-            // IMPORTANTE: Aqui você deve implementar a busca REAL na sua DB de estatísticas.
-            const stats = simulateMatchStats(localTeam.id, visitorTeam.id);
-
-            // 4. Aplica o Modelo de Predição (Poisson)
-            const probabilidadeModelo = calculateOver15Probability(stats);
-            
-            // 5. Calcula a Probabilidade Implícita e o Expected Value (EV)
-            const probabilidadeImplicita = calculateImpliedProbability(oddOver15);
-            const value = calculateValue(probabilidadeModelo, oddOver15); // > 0 indica Value Bet
-            
-            // 6. Define a Oportunidade (Filtro de Valor)
-            const oportunidade = value > 0.10; // Filtro: Aposta de valor se EV for superior a 10%
-            
-            previsoesFinais.push({
-                id: fixture.id,
-                liga_nome: fixture.league ? fixture.league.name : 'N/A',
-                mandante: localTeam.name,
-                visitante: visitorTeam.name,
-                odd_over_1_5: oddOver15.toFixed(2),
-                
-                // Resultados do Modelo
-                prob_modelo: (probabilidadeModelo * 100).toFixed(2) + '%',
-                prob_implicita: (probabilidadeImplicita * 100).toFixed(2) + '%',
-                
-                // Decisão Final
-                value_bet: value.toFixed(4),
-                oportunidade_valor: oportunidade
+            // Se os 3 pares existirem na OKX, é um triângulo SPOT válido
+            foundTriangles.push({
+                alt: base,
+                base: 'BTC',
+                quote: quoteCurrency,
+                pair1: pair1, // A/USDT
+                pair2: pair2, // A/BTC
+                pair3: pair3  // BTC/USDT
             });
+            checkedCount++;
         }
-        
-        console.log(`✅ Previsões geradas para ${previsoesFinais.length} jogos.`);
-        res.json({
-            data: previsoesFinais
-        });
+
+        trianglesToMonitor = foundTriangles;
+        console.log(`✅ Descoberta Completa. Total de ${trianglesToMonitor.length} triângulos (A/BTC/USDT) encontrados na OKX.`);
 
     } catch (error) {
-        // Log detalhado para diagnosticar erros de API ou token
-        if (error.response) {
-            // Erros como 401 (Token Inválido) ou 404 (Endpoint não encontrado)
-            console.error(`❌ Erro Sportmonks (Status: ${error.response.status}): ${error.message}`);
-            // Mostra o erro detalhado no navegador
-            res.status(error.response.status).json({ 
-                erro: `Erro na API Sportmonks. Status: ${error.response.status}`, 
-                detalhes: error.response.data || 'Resposta da API vazia. Verifique o API_TOKEN ou o URL.'
-            });
-        } else {
-            // Erros de rede, DNS ou código interno
-            console.error('❌ Erro de Rede ou Código:', error.message);
-            res.status(500).json({ erro: 'Erro interno ao processar a requisição', detalhes: error.message });
-        }
+        console.error("❌ ERRO FATAL ao carregar mercados ou descobrir triângulos. ", error.message);
     }
-});
+}
+
+// ===========================================
+// FUNÇÃO DE EXECUÇÃO DE ORDEM
+// ===========================================
+
+async function executeTriangularArbitrage(triangle, profitPercent, prices, direction) {
+    const { alt, pair1, pair2, pair3 } = triangle;
+    
+    if (!marketInfo[pair1] || !marketInfo[pair2] || !marketInfo[pair3]) {
+        console.error("❌ Erro: Informações de mercado não carregadas. Pulando execução.");
+        return;
+    }
+
+    // AVISO E ALERTA SONORO
+    console.log(`\n================== 🚀 EXECUÇÃO INICIADA na OKX ==================`);
+    console.log('\x07\x07\x07'); 
+    console.log(`  Triângulo: ${alt}/${triangle.base}/${triangle.quote} | Lucro Líquido: ${profitPercent.toFixed(4)}% | Rota: ${direction}`);
+    console.log(`  Capital: ${tradeAmountUSDT} USDT`);
+
+    try {
+        if (direction === 'Direta') { 
+            const [price1, price2, price3] = prices;
+
+            // 1. COMPRAR ALT com USDT (em ALT/USDT)
+            let amount1_alt = tradeAmountUSDT / price1;
+            amount1_alt = exchange.amountToPrecision(pair1, amount1_alt); 
+            console.log(`  -> 1. BUY ${amount1_alt} ${alt} em ${pair1} @ ${price1}`);
+            const order1 = await exchange.createMarketBuyOrder(pair1, amount1_alt); 
+            
+            // 2. VENDER ALT por BTC (em ALT/BTC)
+            let amount2_alt = parseFloat(order1.filled); 
+            amount2_alt = exchange.amountToPrecision(pair2, amount2_alt);
+            console.log(`  -> 2. SELL ${amount2_alt} ${alt} em ${pair2} @ ${price2}`);
+            const order2 = await exchange.createMarketSellOrder(pair2, amount2_alt);
+            
+            // 3. VENDER BTC por USDT (em BTC/USDT)
+            let amount3_btc = parseFloat(order2.filled); 
+            amount3_btc = exchange.amountToPrecision(pair3, amount3_btc);
+            console.log(`  -> 3. SELL ${amount3_btc} BTC em ${pair3} @ ${price3}`);
+            const order3 = await exchange.createMarketSellOrder(pair3, amount3_btc);
+            
+            console.log(`\n✅ ARBITRAGEM COMPLETA. Retorno Final (Aproximado): ${parseFloat(order3.cost).toFixed(4)} USDT.`);
+            
+            logTransaction('SUCESSO', triangle, profitPercent, prices, `Ordem OK. Retorno final: ${parseFloat(order3.cost).toFixed(4)} USDT`);
+            
+        } else {
+             console.log("  ⚠️ Rota Inversa detectada, mas a execução está desabilitada para simplificação.");
+             logTransaction('DETECCAO_INVERSA', triangle, profitPercent, prices, 'Oportunidade inversa detectada, mas a execução está desabilitada.');
+        }
+
+    } catch (error) {
+        console.error(`\n❌ ERRO FATAL AO EXECUTAR ARBITRAGEM na OKX: ${error.message}`);
+        logTransaction('FALHA_EXECUCAO', triangle, profitPercent, prices, `ERRO: ${error.message}`);
+    }
+    console.log(`================================================================================`);
+}
 
 
-// Inicia o servidor
-app.listen(PORT, () => {
-    console.log(`\n✅ API rodando na porta ${PORT}`);
-});
+// ===========================================
+// LÓGICA DE ARBITRAGEM TRIANGULAR
+// ===========================================
+
+async function checkTriangularArbitrage(exchange, triangle) {
+    const { alt, pair1, pair2, pair3 } = triangle;
+    
+    try {
+        const [book1, book2, book3] = await Promise.all([
+            exchange.fetchOrderBook(pair1), 
+            exchange.fetchOrderBook(pair2), 
+            exchange.fetchOrderBook(pair3), 
+        ]);
+        
+        // Rota Direta (USDT -> Alt -> BTC -> USDT)
+        const price1_buy_alt_usdt = book1.asks[0][0]; 
+        const price2_sell_alt_btc = book2.bids[0][0]; 
+        const price3_sell_btc_usdt = book3.bids[0][0]; 
+
+        let finalUSDT_route1 = (1 / price1_buy_alt_usdt) * price2_sell_alt_btc * price3_sell_btc_usdt;
+        const netProfit1 = finalUSDT_route1 - 1 - (3 * okxFee); 
+        
+        // Rota Inversa (USDT -> BTC -> Alt -> USDT)
+        const price1_buy_btc_usdt = book3.asks[0][0];
+        const price2_buy_alt_btc = book2.asks[0][0]; 
+        const price3_sell_alt_usdt = book1.bids[0][0];
+
+        let finalUSDT_route2 = (1 / price1_buy_btc_usdt) / price2_buy_alt_btc * price3_sell_alt_usdt;
+        const netProfit2 = finalUSDT_route2 - 1 - (3 * okxFee); 
+
+        // ANÁLISE E EXECUÇÃO
+        if (netProfit1 > minProfitTriangular) {
+            await executeTriangularArbitrage(triangle, (netProfit1 * 100), [price1_buy_alt_usdt, price2_sell_alt_btc, price3_sell_btc_usdt], 'Direta');
+        } else if (netProfit2 > minProfitTriangular) {
+            await executeTriangularArbitrage(triangle, (netProfit2 * 100), [price1_buy_btc_usdt, price2_buy_alt_btc, price3_sell_alt_usdt], 'Inversa');
+        } 
+        
+        // LOGA TODAS AS OPORTUNIDADES ACIMA DO LUCRO MÍNIMO
+        if (netProfit1 > minProfitTriangular) {
+             logTransaction('DETECCAO_DIRETA', triangle, (netProfit1 * 100), [price1_buy_alt_usdt, price2_sell_alt_btc, price3_sell_btc_usdt], 'Oportunidade Direta detectada.');
+        } else if (netProfit2 > minProfitTriangular) {
+             logTransaction('DETECCAO_INVERSA', triangle, (netProfit2 * 100), [price1_buy_btc_usdt, price2_buy_alt_btc, price3_sell_alt_usdt], 'Oportunidade Inversa detectada.');
+        }
+
+    } catch (error) {
+        // Ignorar erros comuns (como par não suportado ou erro temporário de conexão)
+    }
+}
+
+
+// ===========================================
+// FUNÇÃO PRINCIPAL QUE RODA EM LOOP
+// ===========================================
+
+async function mainLoop() {
+    console.log('----------------------------------------------------');
+    console.log(`[${new Date().toLocaleTimeString()}] INICIANDO BUSCA TRIANGULAR em ${trianglesToMonitor.length} pares...`);
+    
+    // Verifica saldos antes de entrar no loop de pares
+    let balancesChecked = true;
+    try {
+        const okxBalance = await exchange.fetchBalance(); 
+        const okxUSDT = okxBalance.USDT ? okxBalance.USDT.free : 0;
+        
+        if (okxUSDT < tradeAmountUSDT) {
+             console.log(`AVISO: Saldo insuficiente de USDT (${tradeAmountUSDT} USDT necessários). Saldo: ${okxUSDT.toFixed(2)} USDT.`);
+             balancesChecked = false;
+        } else {
+             console.log(`✅ SALDO OK. Capital de Negociação: ${tradeAmountUSDT} USDT. Saldo Atual: ${okxUSDT.toFixed(2)} USDT.`);
+        }
+
+    } catch (error) {
+        console.error('❌ ERRO FATAL ao checar saldos da OKX. Verifique as chaves, Passphrase e permissões.');
+        return; 
+    }
+    
+    if (balancesChecked) {
+        for (const triangle of trianglesToMonitor) {
+            // Atraso para evitar sobrecarregar a API (Rate Limit)
+            // Se o limite de 1s for muito agressivo, aumente este delay.
+            await checkTriangularArbitrage(exchange, triangle); 
+            await new Promise(resolve => setTimeout(resolve, 50)); 
+        }
+    } 
+    
+    console.log(`Busca Finalizada. Esperando ${interval / 1000}s...`);
+}
+
+
+// ===========================================
+// INÍCIO DO BOT
+// ===========================================
+
+(async () => {
+    // 1. Carrega os mercados e descobre todos os triângulos
+    await loadMarketsAndTriangles(); 
+    
+    if (trianglesToMonitor.length > 0) {
+        // 2. Inicia o loop de negociação
+        setInterval(mainLoop, interval); 
+    } else {
+        console.log("❌ ERRO: Nenhum triângulo de arbitragem válido encontrado. O bot não pode iniciar.");
+    }
+})();
