@@ -58,7 +58,7 @@ app.get('/api/previsoes-over-15', async (req, res) => {
         const fixtures = response.data.data;
         
         if (!fixtures || fixtures.length === 0) {
-            console.log("✅ Nenhuma partida encontrada para a data de teste.");
+            console.log("✅ Nenhuma partida encontrada para a data de hoje.");
             return res.status(200).json({ mensagem: "Nenhuma partida encontrada ou erro ao extrair dados.", previsoes: [] });
         }
 
