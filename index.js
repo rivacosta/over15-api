@@ -48,9 +48,8 @@ app.get('/api/previsoes-over-15', async (req, res) => {
     const dataFormatada = `${ano}-${mes}-${dia}`;
 
     // Endpoint da Sportmonks para jogos de hoje, incluindo times e odds (+1.5 Gols)
-    // NOTE: A inclusão das ODDS requer um plano Sportmonks que suporte o recurso.
-    // OID 144 representa o mercado "Total Gols Over/Under 1.5" na maioria dos provedores.
-    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=localTeam;visitorTeam;odds.bookmaker.odds.market(144)`;
+    // CORREÇÃO: Alteramos 'localTeam;visitorTeam' para 'participants' para evitar o erro 404/5001.
+    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=participants;odds.bookmaker.odds.market(144)`;
 
     console.log(`\n➡️ Buscando jogos e odds para ${dataFormatada}...`);
 
@@ -67,6 +66,22 @@ app.get('/api/previsoes-over-15', async (req, res) => {
 
         // 2. Itera sobre cada jogo e aplica o modelo
         for (const fixture of fixtures) {
+
+            // === EXTRAÇÃO DE DADOS APÓS A CORREÇÃO DA API ===
+            // Na V3, as equipes (participants) vêm em um array e você precisa identificar quem é local e quem é visitante.
+            const localTeam = fixture.participants.find(p => p.pivot.location === 'home');
+            const visitorTeam = fixture.participants.find(p => p.pivot.location === 'away');
+
+            if (!localTeam || !visitorTeam) {
+                previsoesFinais.push({
+                    id: fixture.id,
+                    mandante: "DESCONHECIDO",
+                    visitante: "DESCONHECIDO",
+                    status: "ERRO DE EXTRAÇÃO DE TIMES",
+                    detalhe: "Não foi possível identificar o time local ou visitante no array 'participants'."
+                });
+                continue;
+            }
             
             // Tenta encontrar as odds de +1.5 Gols (Assumindo OID 144 para Over/Under 1.5)
             const market15 = fixture.odds.find(odd => 
@@ -76,8 +91,8 @@ app.get('/api/previsoes-over-15', async (req, res) => {
                 // Se as odds não estiverem disponíveis, pula o jogo
                 previsoesFinais.push({
                     id: fixture.id,
-                    mandante: fixture.localTeam.name,
-                    visitante: fixture.visitorTeam.name,
+                    mandante: localTeam.name, // Usando a variável corrigida
+                    visitante: visitorTeam.name, // Usando a variável corrigida
                     status: "ODDS INDISPONÍVEIS",
                     detalhe: "Não foi possível encontrar o mercado Over/Under 1.5 nas odds."
                 });
@@ -93,8 +108,8 @@ app.get('/api/previsoes-over-15', async (req, res) => {
             if (oddOver15 === 0) {
                 previsoesFinais.push({
                     id: fixture.id,
-                    mandante: fixture.localTeam.name,
-                    visitante: fixture.visitorTeam.name,
+                    mandante: localTeam.name, // Usando a variável corrigida
+                    visitante: visitorTeam.name, // Usando a variável corrigida
                     status: "ODD 1.5 NÃO ENCONTRADA",
                     detalhe: "O valor da odd Over 1.5 é zero ou não foi extraído corretamente."
                 });
@@ -102,7 +117,8 @@ app.get('/api/previsoes-over-15', async (req, res) => {
             }
 
             // 3. Obtém as estatísticas necessárias (FA, FD, Média da Liga)
-            const stats = simulateMatchStats(fixture.localTeam.id, fixture.visitorTeam.id);
+            // Os IDs usados aqui são os IDs dos participantes
+            const stats = simulateMatchStats(localTeam.id, visitorTeam.id);
 
             // 4. Aplica o Modelo de Predição (Poisson)
             const probabilidadeModelo = calculateOver15Probability(stats);
@@ -117,8 +133,8 @@ app.get('/api/previsoes-over-15', async (req, res) => {
             previsoesFinais.push({
                 id: fixture.id,
                 liga: fixture.league_id,
-                mandante: fixture.localTeam.name,
-                visitante: fixture.visitorTeam.name,
+                mandante: localTeam.name, // Usando a variável corrigida
+                visitante: visitorTeam.name, // Usando a variável corrigida
                 odd_over_1_5: oddOver15.toFixed(2),
                 
                 // Resultados do Modelo
