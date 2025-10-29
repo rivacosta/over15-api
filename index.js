@@ -48,8 +48,9 @@ app.get('/api/previsoes-over-15', async (req, res) => {
     const dataFormatada = `${ano}-${mes}-${dia}`;
 
     // Endpoint da Sportmonks para jogos de hoje, incluindo times e odds (+1.5 Gols)
-    // CORREÇÃO: Alteramos 'localTeam;visitorTeam' para 'participants' para evitar o erro 404/5001.
-    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=participants;odds.bookmaker.odds.market(144)`;
+    // CORREÇÃO: Simplificamos o parâmetro 'include' para evitar o erro 404 (Request failed).
+    // Pedimos 'participants' (times) e 'odds' (todas as odds).
+    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=participants;odds`;
 
     console.log(`\n➡️ Buscando jogos e odds para ${dataFormatada}...`);
 
@@ -84,6 +85,7 @@ app.get('/api/previsoes-over-15', async (req, res) => {
             }
             
             // Tenta encontrar as odds de +1.5 Gols (Assumindo OID 144 para Over/Under 1.5)
+            // Agora filtramos no JS, pois a URL simplificada traz todas as odds.
             const market15 = fixture.odds.find(odd => 
                 odd.market_id === 144 || (odd.name && (odd.name.includes("1.5") || odd.name.includes("Over"))));
 
