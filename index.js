@@ -39,9 +39,13 @@ if (!API_TOKEN || API_TOKEN === "INSIRA_O_SEU_TOKEN_REAL_AQUI" || API_TOKEN === 
 // Rota Principal: Busca jogos, aplica o modelo e calcula o valor
 app.get('/api/previsoes-over-15', async (req, res) => {
     // 1. Configura a data de hoje para a busca na Sportmonks
-    // A data de 2025-10-29 é fixa para garantir que o endpoint funcione com dados históricos para testes.
-    // Numa aplicação real, deve ser a data de hoje.
-    const dataFormatada = '2025-10-29'; 
+    // A data será a data do sistema para garantir que haja jogos no dia de hoje.
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    const dataFormatada = `${year}-${month}-${day}`;
+    // FIM DA CORREÇÃO
 
     // Endpoint da Sportmonks para jogos, incluindo times, liga e odds.
     // O 'include' foi corrigido para 'participants.team;league;odds' para evitar o erro 404 da API V3.
