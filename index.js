@@ -29,9 +29,7 @@ const PORT = process.env.PORT || 10000;
 if (!API_TOKEN || API_TOKEN === "INSIRA_O_SEU_TOKEN_REAL_AQUI" || API_TOKEN === "seu_token_aqui") {
     console.error("❌ ERRO CRÍTICO: O API_TOKEN não foi carregado corretamente.");
     console.error("Por favor, verifique se o ficheiro .env existe na raiz do projeto e contém o seu token real.");
-    // Saímos para evitar falhas de requisição 401
-    // return process.exit(1); 
-    // Em produção, a linha acima seria ativada. Deixamos desativada para que a API inicie e mostre o erro no navegador.
+    // Deixamos a linha de saída comentada para que a API inicie e mostre o erro no navegador, se necessário.
 } else {
     console.log(`✅ Token Carregado: ${API_TOKEN.substring(0, 5)}...`);
 }
@@ -41,16 +39,13 @@ if (!API_TOKEN || API_TOKEN === "INSIRA_O_SEU_TOKEN_REAL_AQUI" || API_TOKEN === 
 // Rota Principal: Busca jogos, aplica o modelo e calcula o valor
 app.get('/api/previsoes-over-15', async (req, res) => {
     // 1. Configura a data de hoje para a busca na Sportmonks
-    const today = new Date();
-    const ano = today.getFullYear();
-    const mes = String(today.getMonth() + 1).padStart(2, '0');
-    const dia = String(today.getDate()).padStart(2, '0');
-    const dataFormatada = `${ano}-${mes}-${dia}`;
+    // A data de 2025-10-29 é fixa para garantir que o endpoint funcione com dados históricos para testes.
+    // Numa aplicação real, deve ser a data de hoje.
+    const dataFormatada = '2025-10-29'; 
 
-    // Endpoint da Sportmonks para jogos de hoje, incluindo times e odds (+1.5 Gols)
-    // CORREÇÃO: Simplificamos o parâmetro 'include' para evitar o erro 404 (Request failed).
-    // Pedimos 'participants' (times) e 'odds' (todas as odds).
-    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=participants;odds`;
+    // Endpoint da Sportmonks para jogos, incluindo times, liga e odds.
+    // O 'include' foi corrigido para 'participants.team;league;odds' para evitar o erro 404 da API V3.
+    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${dataFormatada}?api_token=${API_TOKEN}&include=participants.team;league;odds`;
 
     console.log(`\n➡️ Buscando jogos e odds para ${dataFormatada}...`);
 
@@ -59,7 +54,7 @@ app.get('/api/previsoes-over-15', async (req, res) => {
         const fixtures = response.data.data;
         
         if (!fixtures || fixtures.length === 0) {
-            console.log("✅ Nenhuma partida encontrada para hoje.");
+            console.log("✅ Nenhuma partida encontrada para a data de teste.");
             return res.status(200).json({ mensagem: "Nenhuma partida encontrada ou erro ao extrair dados.", previsoes: [] });
         }
 
@@ -68,58 +63,53 @@ app.get('/api/previsoes-over-15', async (req, res) => {
         // 2. Itera sobre cada jogo e aplica o modelo
         for (const fixture of fixtures) {
 
-            // === EXTRAÇÃO DE DADOS APÓS A CORREÇÃO DA API ===
-            // Na V3, as equipes (participants) vêm em um array e você precisa identificar quem é local e quem é visitante.
+            // Extrai as equipes. Na V3, as equipes (participants) vêm em um array.
             const localTeam = fixture.participants.find(p => p.pivot.location === 'home');
             const visitorTeam = fixture.participants.find(p => p.pivot.location === 'away');
 
             if (!localTeam || !visitorTeam) {
                 previsoesFinais.push({
                     id: fixture.id,
-                    mandante: "DESCONHECIDO",
-                    visitante: "DESCONHECIDO",
                     status: "ERRO DE EXTRAÇÃO DE TIMES",
                     detalhe: "Não foi possível identificar o time local ou visitante no array 'participants'."
                 });
                 continue;
             }
             
-            // Tenta encontrar as odds de +1.5 Gols (Assumindo OID 144 para Over/Under 1.5)
-            // Agora filtramos no JS, pois a URL simplificada traz todas as odds.
+            // Tenta encontrar as odds de +1.5 Gols (Assumindo Market ID 144 para Over/Under 1.5)
             const market15 = fixture.odds.find(odd => 
-                odd.market_id === 144 || (odd.name && (odd.name.includes("1.5") || odd.name.includes("Over"))));
+                odd.market_id === 144 || (odd.name && (odd.name.includes("1.5"))));
 
             if (!market15 || !market15.bookmaker || market15.bookmaker.length === 0) {
-                // Se as odds não estiverem disponíveis, pula o jogo
                 previsoesFinais.push({
                     id: fixture.id,
-                    mandante: localTeam.name, // Usando a variável corrigida
-                    visitante: visitorTeam.name, // Usando a variável corrigida
+                    mandante: localTeam.name,
+                    visitante: visitorTeam.name,
                     status: "ODDS INDISPONÍVEIS",
-                    detalhe: "Não foi possível encontrar o mercado Over/Under 1.5 nas odds."
+                    detalhe: "Não foi possível encontrar o mercado Over/Under 1.5."
                 });
                 continue;
             }
             
-            // Extrai a Odd de Over 1.5 Gols (Assumindo que o primeiro odd é o Over)
-            // IMPORTANTE: Isso é uma simplificação. A Sportmonks tem códigos específicos para 'Over' e 'Under'.
-            // Aqui, usamos a primeira odd disponível do mercado 144 como simulação do Over 1.5.
-            const oddData = market15.bookmaker[0].odds.find(o => o.label.includes('Over') || o.label === '1.5');
+            // Extrai a Odd de Over 1.5 Gols (Procura a odd com 'Over' ou '1.5')
+            const oddData = market15.bookmaker[0].odds.find(o => 
+                o.label.includes('Over') || o.label.includes('1.5'));
+            
             const oddOver15 = oddData ? parseFloat(oddData.value) : 0;
             
             if (oddOver15 === 0) {
                 previsoesFinais.push({
                     id: fixture.id,
-                    mandante: localTeam.name, // Usando a variável corrigida
-                    visitante: visitorTeam.name, // Usando a variável corrigida
+                    mandante: localTeam.name,
+                    visitante: visitorTeam.name,
                     status: "ODD 1.5 NÃO ENCONTRADA",
                     detalhe: "O valor da odd Over 1.5 é zero ou não foi extraído corretamente."
                 });
                 continue;
             }
 
-            // 3. Obtém as estatísticas necessárias (FA, FD, Média da Liga)
-            // Os IDs usados aqui são os IDs dos participantes
+            // 3. Obtém as estatísticas necessárias (FA, FD, Média da Liga) - **USANDO SIMULAÇÃO**
+            // IMPORTANTE: Aqui você deve implementar a busca REAL na sua DB de estatísticas.
             const stats = simulateMatchStats(localTeam.id, visitorTeam.id);
 
             // 4. Aplica o Modelo de Predição (Poisson)
@@ -134,9 +124,9 @@ app.get('/api/previsoes-over-15', async (req, res) => {
             
             previsoesFinais.push({
                 id: fixture.id,
-                liga: fixture.league_id,
-                mandante: localTeam.name, // Usando a variável corrigida
-                visitante: visitorTeam.name, // Usando a variável corrigida
+                liga_nome: fixture.league ? fixture.league.name : 'N/A',
+                mandante: localTeam.name,
+                visitante: visitorTeam.name,
                 odd_over_1_5: oddOver15.toFixed(2),
                 
                 // Resultados do Modelo
@@ -159,9 +149,10 @@ app.get('/api/previsoes-over-15', async (req, res) => {
         if (error.response) {
             // Erros como 401 (Token Inválido) ou 404 (Endpoint não encontrado)
             console.error(`❌ Erro Sportmonks (Status: ${error.response.status}): ${error.message}`);
+            // Mostra o erro detalhado no navegador
             res.status(error.response.status).json({ 
                 erro: `Erro na API Sportmonks. Status: ${error.response.status}`, 
-                detalhes: error.response.data || 'Sem dados adicionais. Verifique o API_TOKEN.'
+                detalhes: error.response.data || 'Resposta da API vazia. Verifique o API_TOKEN ou o URL.'
             });
         } else {
             // Erros de rede, DNS ou código interno
